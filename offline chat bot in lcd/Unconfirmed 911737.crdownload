@@ -1,0 +1,55 @@
+from flask import Flask, request, jsonify, render_template
+import requests
+
+app = Flask(__name__)
+
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+MODEL = "llama3.2:3b"
+API_KEY = "my_esp32_secret_key"  # Simple shared key for protection
+
+@app.route("/")
+def home():
+    return render_template("index.html")
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    # 1. Security check (allows your web UI or ESP32 if configured)
+    auth_header = request.headers.get("Authorization")
+    # If the request is from the ESP32, it sends Bearer token.
+    # If you want your web UI to work without auth, check if Authorization is present:
+    if auth_header and auth_header != f"Bearer {API_KEY}":
+        return jsonify({"error": "Unauthorized"}), 401
+
+    data = request.get_json(silent=True) or {}
+    
+    # Support both "prompt" (from ESP32) and "message" (from your web UI)
+    user_message = data.get("prompt") or data.get("message")
+    if not user_message:
+        return jsonify({"error": "No message provided"}), 400
+
+    # 2. Instruct Ollama to be concise for microcontrollers/screens
+    prompt_payload = f"Reply in under 6 words, no punctuation, under 30 characters maximum and be emotional: {user_message}"
+
+    try:
+        response = requests.post(
+            OLLAMA_URL,
+            json={
+                "model": MODEL,
+                "prompt": prompt_payload,
+                "stream": False
+            },
+            timeout=90
+        )
+        response.raise_for_status()
+        reply = response.json().get("response", "").strip()
+    except requests.exceptions.RequestException as e:
+        return jsonify({"error": str(e)}), 500
+
+    # Return both keys ("response" for ESP32, "reply" for your web page)
+    return jsonify({
+        "reply": reply,
+        "response": reply
+    })
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000, debug=False)
